@@ -1,0 +1,61 @@
+node('master'){
+    def scmVars = checkout scm
+    def giturl = scmVars.GIT_URL
+    String[] jobname_ = "$JOB_NAME".split('/')
+    def jobname = jobname_[0]
+    String[] branchname_ = "${env.BRANCH_NAME}".split('/')
+    def branchname = branchname_[0]
+
+    properties([
+        buildDiscarder(logRotator(artifactDaysToKeepStr: '', artifactNumToKeepStr: '', daysToKeepStr: ' ', numToKeepStr: '10')),
+        parameters([
+            choice(choices: 'test\ntest2\ntest3\nuat\nprod', description: '', name: 'runEnv'),
+            string(name: 'ConfGiturl', defaultValue: 'http://10.0.0.200/dxmallConfig/kepler-service.git', description: '项目配置文件gitlab地址'),
+            string(name: 'ConfGitBranch', defaultValue: 'forJenkins', description: '项目配置文件gitlab的分支名字'),
+            string(name: 'ConfPath_s', defaultValue: '', description: '配置文件在Jenkins主机上的相对路径'),
+            string(name: 'ConfPath_d', defaultValue: 'src/main/resources', description: 'java项目中配置文件在Jenkins主机上的相对路径'),
+            string(name: 'mvnCMD', defaultValue: 'clean install -Dmaven.test.skip=true', description: 'java项目maven构建命令'),
+            string(name: 'target', defaultValue: 'target/kepler-service-1.0.1-SNAPSHOT.jar', description: '构建之后的文件'),
+            string(name: 'uploadshell', defaultValue: '/apps/sh/jenkinsfile/upload_package.sh', description: '文件上传脚本'),
+            string(name: 'playbook', defaultValue: '/apps/sh/jenkinsfile/deploy_kepler.yaml', description: ''),
+        ]),
+        pipelineTriggers([])
+    ])
+
+    stage('Checkout and merge'){
+        sh "rm -fr .git .gitignore ./*"
+        git([url:"$giturl",branch:"master"])
+        git([url:"$giturl",branch:"$branchname"])
+        sh "git checkout $branchname && git merge master"
+        sh "git push origin $branchname"
+        //echo "${params.runEnv}" "${params.playbook}" "${env.BRANCH_NAME}" "$jobname" "$WORKSPACE" "$giturl"
+    }
+    stage('replace config'){
+        echo pwd()
+        sh "if [ ! -d ../config/$jobname ];then mkdir -p ../config/$jobname;else rm -fr ../config/$jobname;fi"
+        dir("../config/$jobname"){
+            git([url:"${params.ConfGiturl}",branch:"${params.ConfGitBranch}"])
+        }
+        sh "if [ -f ../config/$jobname/${params.runEnv}/${params.ConfPath_s} ];then cp -R ../config/$jobname/${params.runEnv}/${params.ConfPath_s} ${params.ConfPath_d};else cp -R ../config/$jobname/${params.runEnv}/${params.ConfPath_s}/* ${params.ConfPath_d};fi"
+    }
+    stage('build'){
+        sh "mvn ${params.mvnCMD}"
+        echo pwd()
+    }
+    stage('upload package'){
+        sh "bash  ${params.uploadshell} $WORKSPACE/${params.target} $jobname ${params.runEnv}"
+    }
+    stage('deploy java app'){
+        if ("${params.runEnv}" == 'uat') {
+            echo '-----------------------------------------------------------------'
+            echo '****** Please use other tools deploy uat environment app ********'
+            echo '-----------------------------------------------------------------'
+        } else if ("${params.runEnv}" == 'prod'){
+            echo '----------------------------------------------------------------------'
+            echo '****** Please use other tools deploy production environment app ******'
+            echo '----------------------------------------------------------------------'
+        } else {
+            ansiblePlaybook extraVars:["jobname":"$jobname", "StartupPara":"${params.runEnv}"], installation: 'ansible-playbook', limit: "${params.runEnv}", playbook: "${params.playbook}", sudoUser: null
+        }
+    }
+}
