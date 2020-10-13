@@ -1,0 +1,40 @@
+---
+- hosts: all
+  gather_facts: false
+  tasks:
+      - name: deploy kepler
+        shell: "ls /apps/svr/tomcat_mall/kepler"
+        register: result
+        ignore_errors: True
+
+      - shell: "ps aux |grep -v grep| grep java | grep kepler | awk '{print $2}'|xargs -i kill -9 {}"
+        when: result|succeeded
+
+      - shell: "rm -f /apps/svr/tomcat_mall/kepler/*.jar"
+        when: result|succeeded
+
+      - shell: "scp apps@192.168.100.2:/home/apps/beta-repository/{{ StartupPara }}/{{ jobname }}/kepler-service-*-SNAPSHOT.jar /apps/svr/tomcat_mall/kepler/"
+        when: result|succeeded
+        register: info
+      - debug: var=info
+
+      - shell: "ls -lrth /apps/svr/tomcat_mall/kepler/kepler-service-*-SNAPSHOT.jar|tail -1|awk -F/ '{print $NF}'"
+        when: result|succeeded
+        register: info1
+      - debug: var=info1
+
+      - shell: "source /home/apps/.bashrc;cksum /apps/svr/tomcat_mall/kepler/{{ info1['stdout'] }}"
+        when: result|succeeded
+        register: info4
+      - debug: var=info4
+
+      - shell: "source /home/apps/.bashrc;cd /apps/svr/tomcat_mall/kepler/ && nohup java -jar -Dspring.profiles.active={{ StartupPara }}  -XX:SurvivorRatio=6 -XX:NewRatio=3 {{ info1['stdout'] }} &"
+        when: result|succeeded
+        register: info2
+        failed_when: '"Error" in info2.stderr'
+      - debug: var=info2
+
+      - shell: "echo 'java application process number:';ps aux |grep -v grep| grep java | grep kepler | awk '{print $2}'"
+        when: info2|succeeded
+        register: info3
+      - debug: var=info3
